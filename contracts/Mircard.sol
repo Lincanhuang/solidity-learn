@@ -6,7 +6,7 @@ import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/token/common/ERC2981.sol";
 import "operator-filter-registry/src/UpdatableOperatorFilterer.sol";
 
-contract OKPassport is
+contract Mircard is
     Ownable,
     UpdatableOperatorFilterer,
     ERC2981,
@@ -25,13 +25,13 @@ contract OKPassport is
 
     event TokenLocked(uint256 indexed tokenId);
     event TokenUnlocked(uint256 indexed tokenId);
-    event AddSupply(uint256 preSupply, uint256 addQuantity);
-    event AipDropEvent(
+    event SupplyAdded(uint256 preSupply, uint256 addQuantity);
+    event Airdropped(
         address[] accounts,
         uint256[] quantitys,
         uint256 startTokenId
     );
-    event Burn(uint256 indexed burnToken);
+    event BurnSynthesize(uint256 indexed burnToken, uint256 synthesizeToken);
 
     string private _uri;
     mapping(uint256 => bool) private _lockTokens; //token => isLooked
@@ -80,7 +80,7 @@ contract OKPassport is
                 i += 1;
             }
         }
-        emit AipDropEvent(accounts, quantitys, startTokenId);
+        emit Airdropped(accounts, quantitys, startTokenId);
     }
 
     function tokenURI(
@@ -103,7 +103,7 @@ contract OKPassport is
         if (quantity <= 0) {
             revert AddSupplyParamsError();
         }
-        emit AddSupply(maxSupply, quantity);
+        emit SupplyAdded(maxSupply, quantity);
         maxSupply = maxSupply + quantity;
     }
 
@@ -113,12 +113,15 @@ contract OKPassport is
         }
     }
 
-    function burn(uint256 tokenId) external onlyTokenOwner(tokenId) {
-        if (_lockTokens[tokenId]) {
-            revert TokenIsLocked(tokenId);
+    function burnAndSynthesize(
+        uint256 burnTokenId,
+        uint256 synthesizeTokenId
+    ) external onlyTokenOwner(burnTokenId) onlyTokenOwner(synthesizeTokenId) {
+        if (_lockTokens[burnTokenId]) {
+            revert TokenIsLocked(burnTokenId);
         }
-        _burn(tokenId);
-        emit Burn(tokenId);
+        _burn(burnTokenId);
+        emit BurnSynthesize(burnTokenId, synthesizeTokenId);
     }
 
     function owner()

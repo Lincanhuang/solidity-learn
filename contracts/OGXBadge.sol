@@ -25,7 +25,7 @@ contract OGXBadge is
 
     event TokenLocked(uint256 indexed tokenId);
     event TokenUnlocked(uint256 indexed tokenId);
-    event AipDropEvent(
+    event Airdropped(
         address[] accounts,
         uint256[] quantitys,
         uint256 startTokenId
@@ -33,7 +33,7 @@ contract OGXBadge is
 
     uint256 private _seasonCount;
     mapping(uint256 => bool) private _lockTokens; //token => isLooked
-    mapping(uint256 => uint256) private _tokenSeasonData; //token => season;token is the season max token id;
+    mapping(uint256 => uint256) private _tokenSeasonData; //token => season;token is the season start token id;
     mapping(uint256 => string) private _seasonBaseURIData; //season => baseURI;
 
     constructor(
@@ -82,7 +82,7 @@ contract OGXBadge is
         _seasonCount = _seasonCount + 1;
         _seasonBaseURIData[_seasonCount] = baseURI;
         _tokenSeasonData[startTokenId] = _seasonCount;
-        emit AipDropEvent(accounts, quantitys, startTokenId);
+        emit Airdropped(accounts, quantitys, startTokenId);
     }
 
     function tokenURI(
