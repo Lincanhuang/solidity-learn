@@ -10,21 +10,20 @@ import "@openzeppelin/contracts/token/common/ERC2981.sol";
 import "operator-filter-registry/src/UpdatableOperatorFilterer.sol";
 
 contract OGXNFT is
-    Ownable,
-    UpdatableOperatorFilterer,
-    ERC2981,
-    ERC721A,
-    ReentrancyGuard
+Ownable,
+UpdatableOperatorFilterer,
+ERC2981,
+ERC721A,
+ReentrancyGuard
 {
     struct Season {
         uint256 price;
         uint256 sellNum;
         uint256 start_time;
         uint256 end_time;
-        uint256 limit;
     }
 
-    struct WhitelistSeason {
+    struct Whitelist {
         uint256 season;
         bytes32 merkleRoot;
     }
@@ -33,16 +32,15 @@ contract OGXNFT is
 
     uint256 public constant MAX_SUPPLY = 10000;
     bool public allowBuy = true;
+    uint256 public buyLimit = 2;
 
-    uint256 private _seasonMapIndex = 2;
-    mapping(uint256 => uint256) _indexSeasonMap;
+    uint256[] private seasonList;
     string private _hiddenMetadataURI;
     mapping(uint256 => string) public seasonUriMap;
-    mapping(uint256 => mapping(address => mapping(uint256 => uint256)))
-        public soldBoxesLimit; // type => address => seasonNum => buynum
+    mapping(uint256 => Whitelist) public seasonWhitelist; // season => WhitelistSeason
+
     mapping(uint256 => uint256) private _tokenSeasonMap; // tokenId => season
     mapping(uint256 => mapping(uint256 => Season)) private _ogxSeasons; // seasonNum => type => FUNQSeason
-    mapping(uint256 => WhitelistSeason) public whitelistSeasons; // season => WhitelistSeason
     mapping(uint256 => bool) private _lockTokens; //token => isLooked
 
     event TokenBorned(
@@ -51,25 +49,24 @@ contract OGXNFT is
         uint256 quantity,
         uint256 season
     );
-    event SetRemainingEvolved(
-        uint256 indexed _season,
-        uint256 indexed _type,
-        uint256 _sellNum,
-        uint256 _start_time,
-        uint256 _end_time
+    event AddSeasonEvolved(
+        uint256 indexed season,
+        uint256 indexed type_,
+        uint256 sellNum,
+        uint256 start_time,
+        uint256 end_time
     );
-    event UpdateRemainingEvolved(
-        uint256 indexed _season,
-        uint256 indexed _type,
-        uint256 _end_time,
-        uint256 _limit
+    event UpdateSeasonEvolved(
+        uint256 indexed season,
+        uint256 indexed type_,
+        uint256 end_time
     );
-    event WhitelistRetire(uint256 indexed _season);
-    event AddToWhitelistEven(uint256 indexed _season, bytes32 _merkleRoot);
-    event SeasonsRetire(uint256 indexed _season, uint256 indexed _type);
+    event WhitelistRetire(uint256 indexed season);
+    event AddToWhitelistEven(uint256 indexed season, bytes32 merkleRoot);
+    event SeasonsRetire(uint256 indexed season, uint256 indexed type_);
     event TokenLocked(uint256 indexed tokenId);
     event TokenUnlocked(uint256 indexed tokenId);
-    event OpenBox(uint256 indexed season, string baseURI);
+    event OpenSeason(uint256 indexed season, string baseURI);
 
     error IsNoOwner();
     error SeasonURINotEmpty(uint256 seasonNum);
@@ -84,8 +81,8 @@ contract OGXNFT is
         address filterRegistry,
         address subscribeRegistry
     )
-        ERC721A(name, symbol)
-        UpdatableOperatorFilterer(address(0), address(0), false)
+    ERC721A(name, symbol)
+    UpdatableOperatorFilterer(address(0), address(0), false)
     {
         _hiddenMetadataURI = hiddenMetadataURI;
         _initRetainSeason();
@@ -100,119 +97,99 @@ contract OGXNFT is
                 );
             }
         }
-        _indexSeasonMap[0] = 1;
-        _indexSeasonMap[1] = 2;
+        seasonList.push(1);
+        seasonList.push(2);
     }
 
-    // set init
-    function setRemaining(
-        uint256 _season,
-        uint256 _type,
-        uint256 _price,
-        uint256 _sellNum,
-        uint256 _start_time,
-        uint256 _end_time,
-        uint256 _limit
+    function addSeason(
+        uint256 season,
+        uint256 type_,
+        uint256 price,
+        uint256 sellNum,
+        uint256 start_time,
+        uint256 end_time
     ) external onlyOwner {
-        require(_season > 2, "season invalid");
-        require(_start_time > 0, "start time invalid");
-        require((_end_time > _start_time), "end time invalid 1");
-        require(_sellNum > 0, "sell num invalid");
-        Season storage _FUNQSeason = _ogxSeasons[_season][_type];
-        _FUNQSeason.price = _price;
-        _FUNQSeason.sellNum = _sellNum;
-        _FUNQSeason.start_time = _start_time;
-        _FUNQSeason.end_time = _end_time;
-        _FUNQSeason.limit = _limit;
+        require(season > 2, "season invalid");
+        require(start_time > 0, "start time invalid");
+        require((end_time > start_time), "end time invalid 1");
+        require(sellNum > 0, "sell num invalid");
+        Season storage ogxSeason = _ogxSeasons[season][type_];
+        ogxSeason.price = price;
+        ogxSeason.sellNum = sellNum;
+        ogxSeason.start_time = start_time;
+        ogxSeason.end_time = end_time;
 
-        _indexSeasonMap[_seasonMapIndex] = _season;
-        _seasonMapIndex = _seasonMapIndex + 1;
+        seasonList.push(season);
 
-        emit SetRemainingEvolved(
-            _season,
-            _type,
-            _sellNum,
-            _start_time,
-            _end_time
-        );
+        emit AddSeasonEvolved(season, type_, sellNum, start_time, end_time);
     }
 
-    function updateRemaining(
-        uint256 _season,
-        uint256 _type,
-        uint256 _end_time,
-        uint256 _limit
+    function updateSeason(
+        uint256 season,
+        uint256 type_,
+        uint256 end_time
     ) external onlyOwner {
-        require(_season > 2, "season invalid");
-        Season storage _FUNQSeason = _ogxSeasons[_season][_type];
-        require(_FUNQSeason.start_time > 0, "season not exist");
+        require(season > 2, "season invalid");
+        Season storage ogxSeason = _ogxSeasons[season][type_];
+        require(ogxSeason.start_time > 0, "season not exist");
         require(
-            (_end_time > _FUNQSeason.start_time),
+            (end_time > ogxSeason.start_time),
             "end_time must over start_time"
         );
-        _FUNQSeason.end_time = _end_time;
-        _FUNQSeason.limit = _limit;
-        emit UpdateRemainingEvolved(_season, _type, _end_time, _limit);
+        ogxSeason.end_time = end_time;
+        emit UpdateSeasonEvolved(season, type_, end_time);
     }
 
-    function retireRemaining(
-        uint256 _season,
-        uint256 _type
-    ) external onlyOwner {
-        require(_season > 2, "season invalid");
-        delete (_ogxSeasons[_season][_type]);
-        for (uint i = 2; i < _seasonMapIndex; i++) {
-            if (_season == _indexSeasonMap[i]) {
-                delete _indexSeasonMap[i];
+    function retireRemaining(uint256 season, uint256 type_) external onlyOwner {
+        require(season > 2, "season invalid");
+        delete (_ogxSeasons[season][type_]);
+        for (uint i = 2; i < seasonList.length; i++) {
+            if (season == seasonList[i]) {
+                delete seasonList[i];
                 break;
             }
         }
-        emit SeasonsRetire(_season, _type);
+        emit SeasonsRetire(season, type_);
     }
 
     // Function to set the merkle root
     function addToWhitelist(
-        uint256 _season,
-        bytes32 _newMerkleRoot
+        uint256 season,
+        bytes32 newMerkleRoot
     ) external onlyOwner {
-        whitelistSeasons[_season].season = _season;
-        whitelistSeasons[_season].merkleRoot = _newMerkleRoot;
-        emit AddToWhitelistEven(
-            whitelistSeasons[_season].season,
-            whitelistSeasons[_season].merkleRoot
-        );
+        seasonWhitelist[season].season = season;
+        seasonWhitelist[season].merkleRoot = newMerkleRoot;
+        emit AddToWhitelistEven(season, newMerkleRoot);
     }
 
-    function retireWhitelist(uint256 _season) external onlyOwner {
-        delete (whitelistSeasons[_season]);
-        emit WhitelistRetire(whitelistSeasons[_season].season);
+    function retireWhitelist(uint256 season) external onlyOwner {
+        delete (seasonWhitelist[season]);
+        emit WhitelistRetire(season);
     }
 
     function buyBox(
-        uint256 _season,
-        uint256 _type,
+        uint256 season,
+        uint256 type_,
         uint256 num,
-        bytes32[] calldata _merkleProof
+        bytes32[] calldata merkleProof
     ) external payable {
         require(allowBuy, "buy disabled");
-        require(_season > 2, "season invalid");
+        require(season > 2, "season invalid");
         require(num > 0, "number invalid");
         require(_nextTokenId() > 6, "tokenId not up");
         require(totalSupply() + num <= MAX_SUPPLY, "over max supply");
-        Season storage season = _ogxSeasons[_season][_type];
+        Season storage ogxSeason = _ogxSeasons[season][type_];
         require(
-            (season.start_time <= block.timestamp) &&
-                (season.end_time >= block.timestamp),
+            (ogxSeason.start_time <= block.timestamp) &&
+            (ogxSeason.end_time >= block.timestamp),
             "not in the sale period"
         );
-        require(season.sellNum > 0, "sold out");
-        require(season.sellNum >= num, "not enough left");
-        require(season.price * num <= msg.value, "ether invalid");
+        require(ogxSeason.sellNum > 0, "sold out");
+        require(ogxSeason.sellNum >= num, "not enough left");
+        require(ogxSeason.price * num <= msg.value, "ether invalid");
         address sender = _msgSender();
-        if (_type == 1) {
-            WhitelistSeason storage _whitelistSeason = whitelistSeasons[
-                _season
-            ];
+        if (type_ == 1) {
+            Whitelist storage _whitelistSeason = seasonWhitelist[season];
             require(
                 _whitelistSeason.season != 0,
                 "whitelist season nonexistent"
@@ -220,7 +197,7 @@ contract OGXNFT is
             bytes32 leaf = keccak256(abi.encodePacked(sender));
             require(
                 MerkleProof.verify(
-                    _merkleProof,
+                    merkleProof,
                     _whitelistSeason.merkleRoot,
                     leaf
                 ),
@@ -228,24 +205,19 @@ contract OGXNFT is
             );
         }
         // Check max box per user
-        uint256 boughtBoxes = soldBoxesLimit[_type][sender][_season];
-        uint256 totalBoxes = boughtBoxes + num;
-        require(
-            season.limit == 0 || season.limit >= totalBoxes,
-            "reach the limit"
-        );
+        uint256 totalBoxes = balanceOf(sender) + num;
+        require(buyLimit < totalBoxes, "reach the limit");
         // Transfer payment
-        refundIfOver(season.price * num);
-        // Add user bought boxes
-        soldBoxesLimit[_type][sender][_season] = totalBoxes;
+        refundIfOver(ogxSeason.price * num);
+
         uint256 startTokenId = _nextTokenId();
         _mint(sender, num);
-        season.sellNum = season.sellNum - num;
-        _bornFUNQ(startTokenId, _season);
-        emit TokenBorned(sender, startTokenId, num, _season);
+        ogxSeason.sellNum = ogxSeason.sellNum - num;
+        _bornOGX(startTokenId, season);
+        emit TokenBorned(sender, startTokenId, num, season);
     }
 
-    function withdrawMoneyToAddress(
+    function treasuryWithdraw(
         address address_,
         uint256 value
     ) external onlyOwner nonReentrant {
@@ -262,7 +234,7 @@ contract OGXNFT is
         // Add user bought boxes
         uint256 startTokenId = _nextTokenId();
         _mint(to, num);
-        _bornFUNQ(startTokenId, 2);
+        _bornOGX(startTokenId, 2);
         emit TokenBorned(to, startTokenId, num, 2);
     }
 
@@ -275,7 +247,7 @@ contract OGXNFT is
         uint256 startTokenId = _nextTokenId();
         _mint(to, num);
         ogxSeason.sellNum = ogxSeason.sellNum - num;
-        _bornFUNQ(startTokenId, 1);
+        _bornOGX(startTokenId, 1);
         emit TokenBorned(to, startTokenId, num, 1);
     }
 
@@ -321,12 +293,12 @@ contract OGXNFT is
                 return string(abi.encodePacked(_hiddenMetadataURI, "0.json"));
             } else {
                 return
-                    string(abi.encodePacked(uri, tokenId.toString(), ".json"));
+                string(abi.encodePacked(uri, tokenId.toString(), ".json"));
             }
         }
     }
 
-    function openBox(
+    function openSeason(
         uint256 seasonNum,
         string calldata baseUri
     ) external onlyOwner {
@@ -334,21 +306,23 @@ contract OGXNFT is
             revert SeasonURINotEmpty(seasonNum);
         }
         seasonUriMap[seasonNum] = baseUri;
-        emit OpenBox(seasonNum, baseUri);
+        emit OpenSeason(seasonNum, baseUri);
     }
 
-    function setAll(string calldata baseUri) external onlyOwner {
+    function setBaseURI(string calldata baseUri) external onlyOwner {
         require(bytes(baseUri).length > 0, "baseUri is empty");
-        for (uint i = 0; i < _seasonMapIndex; i++) {
-            uint256 seasonNum = _indexSeasonMap[i];
+        for (uint i = 0; i < seasonList.length; i++) {
+            uint256 seasonNum = seasonList[i];
             if (seasonNum > 0) {
                 seasonUriMap[seasonNum] = baseUri;
-                emit OpenBox(seasonNum, baseUri);
+                emit OpenSeason(seasonNum, baseUri);
             }
         }
     }
 
-    function setBaseURI(string memory hiddenMetadataURI) external onlyOwner {
+    function setHiddenMetadataURI(
+        string memory hiddenMetadataURI
+    ) external onlyOwner {
         _hiddenMetadataURI = hiddenMetadataURI;
     }
 
@@ -356,17 +330,20 @@ contract OGXNFT is
         allowBuy = allowBuy_;
     }
 
+    function setBuyLimit(uint256 buyLimit_) external onlyOwner {
+        buyLimit = buyLimit_;
+    }
+
     function getSeason(
-        uint256 _season,
-        uint256 _type
-    ) external view returns (uint256, uint256, uint256, uint256, bool) {
-        Season storage _FUNQSeason = _ogxSeasons[_season][_type];
-        bool soldOut = (_FUNQSeason.sellNum == 0);
+        uint256 season,
+        uint256 type_
+    ) external view returns (uint256, uint256, uint256, bool) {
+        Season storage ogxSeason = _ogxSeasons[season][type_];
+        bool soldOut = (ogxSeason.sellNum == 0);
         return (
-            _FUNQSeason.price,
-            _FUNQSeason.start_time,
-            _FUNQSeason.end_time,
-            _FUNQSeason.limit,
+            ogxSeason.price,
+            ogxSeason.start_time,
+            ogxSeason.end_time,
             soldOut
         );
     }
@@ -389,9 +366,9 @@ contract OGXNFT is
         bytes4 interfaceId
     ) public view virtual override(ERC721A, ERC2981) returns (bool) {
         return
-            ERC721A.supportsInterface(interfaceId) ||
-            ERC2981.supportsInterface(interfaceId) ||
-            super.supportsInterface(interfaceId);
+        ERC721A.supportsInterface(interfaceId) ||
+        ERC2981.supportsInterface(interfaceId) ||
+        super.supportsInterface(interfaceId);
     }
 
     // ========= OPERATOR FILTERER OVERRIDES =========
@@ -446,11 +423,11 @@ contract OGXNFT is
     }
 
     function owner()
-        public
-        view
-        virtual
-        override(Ownable, UpdatableOperatorFilterer)
-        returns (address)
+    public
+    view
+    virtual
+    override(Ownable, UpdatableOperatorFilterer)
+    returns (address)
     {
         return Ownable.owner();
     }
@@ -459,14 +436,13 @@ contract OGXNFT is
     function _initRetainSeason() private {
         Season storage extraSeason = _ogxSeasons[1][0];
         extraSeason.sellNum = 6;
-        extraSeason.limit = 6;
     }
 
     function _startTokenId() internal view virtual override returns (uint256) {
         return 1;
     }
 
-    function _bornFUNQ(uint256 startTokenId, uint256 season) private {
+    function _bornOGX(uint256 startTokenId, uint256 season) private {
         _tokenSeasonMap[startTokenId] = season;
     }
 
