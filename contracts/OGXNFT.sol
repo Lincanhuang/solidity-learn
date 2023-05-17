@@ -40,6 +40,7 @@ contract OGXNFT is
     mapping(uint256 => string) public seasonUriMap; //seasonNum => uri
     mapping(uint256 => Whitelist) public seasonWhitelist; // seasonNum => Whitelist
 
+    mapping(address => uint256) private _walletMints; //record wallet mint number
     mapping(uint256 => uint256) private _tokenSeasonMap; // tokenId => seasonNum
     mapping(uint256 => mapping(uint256 => Season)) private _ogxSeasons; // seasonNum => type => Season
     mapping(uint256 => bool) private _lockTokens; //token => isLooked
@@ -206,8 +207,9 @@ contract OGXNFT is
             );
         }
         // Check max box per user
-        uint256 totalBoxes = balanceOf(sender) + num;
+        uint256 totalBoxes = _walletMints[sender] + num;
         require(buyLimit >= totalBoxes, "reach the limit");
+        _walletMints[sender] = totalBoxes;
         // Transfer payment
         _refundIfOver(ogxSeason.price * num);
 
