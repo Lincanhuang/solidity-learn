@@ -207,7 +207,7 @@ contract OGXNFT is
         }
         // Check max box per user
         uint256 totalBoxes = balanceOf(sender) + num;
-        require(buyLimit <= totalBoxes, "reach the limit");
+        require(buyLimit >= totalBoxes, "reach the limit");
         // Transfer payment
         _refundIfOver(ogxSeason.price * num);
 
