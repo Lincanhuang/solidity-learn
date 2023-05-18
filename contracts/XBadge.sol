@@ -1,23 +1,23 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.19;
+
 import "erc721a/contracts/ERC721A.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/token/common/ERC2981.sol";
 import "operator-filter-registry/src/UpdatableOperatorFilterer.sol";
 
-contract Mircard is
+contract XBadge is
     Ownable,
     UpdatableOperatorFilterer,
     ERC2981,
     ERC721A,
     ReentrancyGuard
 {
-    uint256 public maxSupply = 210;
+    uint256 public constant MAX_SUPPLY = 3_500;
 
     error MaxSupplyExceeded();
     error AirdropParamsError();
-    error AddSupplyParamsError();
     error IsNoOwner();
     error TokenIsLocked(uint256 tokenId);
     error TokenIsUnlocked(uint256 tokenId);
@@ -25,19 +25,18 @@ contract Mircard is
 
     event TokenLocked(uint256 indexed tokenId);
     event TokenUnlocked(uint256 indexed tokenId);
-    event SupplyAdded(uint256 preSupply, uint256 addQuantity);
     event Airdropped(
         address[] accounts,
         uint256[] quantitys,
         uint256 startTokenId
     );
-    event BurnSynthesize(uint256 indexed burnToken, uint256 synthesizeToken);
 
-    string private _uri;
+    uint256 private _seasonCount;
     mapping(uint256 => bool) private _lockTokens; //token => isLooked
+    mapping(uint256 => uint256) private _tokenSeasonData; //token => season;token is the season start token id;
+    mapping(uint256 => string) private _seasonBaseURIData; //season => baseURI;
 
     constructor(
-        string memory baseURI,
         string memory name,
         string memory symbol,
         address filterRegistry,
@@ -46,7 +45,6 @@ contract Mircard is
         ERC721A(name, symbol)
         UpdatableOperatorFilterer(address(0), address(0), false)
     {
-        _uri = baseURI;
         _setDefaultRoyalty(msg.sender, 1000);
         operatorFilterRegistry = IOperatorFilterRegistry(filterRegistry);
         if (address(0) != filterRegistry) {
@@ -62,7 +60,8 @@ contract Mircard is
 
     function airdrop(
         address[] calldata accounts,
-        uint256[] calldata quantitys
+        uint256[] calldata quantitys,
+        string memory baseURI
     ) public onlyOwner nonReentrant {
         uint256 length = accounts.length;
         if (length == 0 || length != quantitys.length) {
@@ -72,7 +71,7 @@ contract Mircard is
         for (uint256 i = 0; i < length; ) {
             address account = accounts[i];
             uint256 quantity = quantitys[i];
-            if (totalSupply() + quantity > maxSupply) {
+            if (totalSupply() + quantity > MAX_SUPPLY) {
                 revert MaxSupplyExceeded();
             }
             _mint(account, quantity);
@@ -80,6 +79,9 @@ contract Mircard is
                 i += 1;
             }
         }
+        _seasonCount = _seasonCount + 1;
+        _seasonBaseURIData[_seasonCount] = baseURI;
+        _tokenSeasonData[startTokenId] = _seasonCount;
         emit Airdropped(accounts, quantitys, startTokenId);
     }
 
@@ -87,41 +89,23 @@ contract Mircard is
         uint256 tokenId
     ) public view virtual override returns (string memory) {
         if (!_exists(tokenId)) revert URIQueryForNonexistentToken();
-
-        string memory baseURI = _baseURI();
+        string memory baseURI;
+        uint256 currentTokenId = tokenId;
+        uint256 startTokenId = _startTokenId();
+        for (; currentTokenId >= startTokenId; ) {
+            uint256 season = _tokenSeasonData[currentTokenId];
+            if (season > 0) {
+                baseURI = _seasonBaseURIData[season];
+                break;
+            }
+            unchecked {
+                currentTokenId -= 1;
+            }
+        }
         return
             bytes(baseURI).length != 0
                 ? string(abi.encodePacked(baseURI, _toString(tokenId), ".json"))
                 : "";
-    }
-
-    function setBaseURI(string calldata baseURI_) external onlyOwner {
-        _uri = baseURI_;
-    }
-
-    function addSupply(uint256 quantity) external onlyOwner {
-        if (quantity <= 0) {
-            revert AddSupplyParamsError();
-        }
-        emit SupplyAdded(maxSupply, quantity);
-        maxSupply = maxSupply + quantity;
-    }
-
-    function totalSupply() public view override returns (uint256) {
-        unchecked {
-            return _nextTokenId() - _startTokenId();
-        }
-    }
-
-    function burnAndSynthesize(
-        uint256 burnTokenId,
-        uint256 synthesizeTokenId
-    ) external onlyTokenOwner(burnTokenId) onlyTokenOwner(synthesizeTokenId) {
-        if (_lockTokens[burnTokenId]) {
-            revert TokenIsLocked(burnTokenId);
-        }
-        _burn(burnTokenId);
-        emit BurnSynthesize(burnTokenId, synthesizeTokenId);
     }
 
     function owner()
@@ -263,21 +247,9 @@ contract Mircard is
         return 1;
     }
 
-    function _baseURI()
-        internal
-        view
-        override(ERC721A)
-        returns (string memory)
-    {
-        return _uri;
-    }
-
-    modifier onlyTokenOwner(uint256 tokenId) virtual {
-        address tokenOwner = ownerOf(tokenId);
-        if (msg.sender != tokenOwner) {
-            revert IsNoOwner();
-        }
-        _;
+    function _existsSeason(uint256 season) internal view returns (bool) {
+        string memory oldURI = _seasonBaseURIData[season];
+        return bytes(oldURI).length > 0;
     }
 
     function _checkTokenOwner(uint256 tokenId) internal view {

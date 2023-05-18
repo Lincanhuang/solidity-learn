@@ -9,7 +9,7 @@ import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 import "@openzeppelin/contracts/token/common/ERC2981.sol";
 import "operator-filter-registry/src/UpdatableOperatorFilterer.sol";
 
-contract OGXNFT is
+contract OGX is
     Ownable,
     UpdatableOperatorFilterer,
     ERC2981,
