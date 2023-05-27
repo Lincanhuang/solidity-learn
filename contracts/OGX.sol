@@ -33,8 +33,8 @@ contract OGX is
     uint256 public constant MAX_SUPPLY = 10000;
     bool public allowBuy = true;
     uint256 public buyLimit = 2;
+    uint256[] public seasonList;
 
-    uint256[] private seasonList;
     string private _hiddenMetadataURI;
 
     mapping(uint256 => string) public seasonUriMap; //seasonNum => uri
@@ -69,9 +69,13 @@ contract OGX is
     event TokenLocked(uint256 indexed tokenId);
     event TokenUnlocked(uint256 indexed tokenId);
     event SeasonOpened(uint256 indexed season, string baseURI);
+    event HiddenMetadataURISet(string baseURI);
+    event AllowBuySet(bool allowBuy);
+    event BuyLimitSet(uint256 buyLimit);
+    event RoyaltyInfoSet(address receiver, uint96 feeBasisPoints);
 
     error IsNoOwner();
-    error SeasonURINotEmpty(uint256 seasonNum);
+    error CallFailed();
     error TokenIsLocked(uint256 tokenId);
     error TokenIsUnlocked(uint256 tokenId);
     error LockQueryForNonexistentToken();
@@ -87,8 +91,7 @@ contract OGX is
         UpdatableOperatorFilterer(address(0), address(0), false)
     {
         _hiddenMetadataURI = hiddenMetadataURI;
-        _initRetainSeason();
-        _setDefaultRoyalty(msg.sender, 1000);
+        _setDefaultRoyalty(msg.sender, 500);
         operatorFilterRegistry = IOperatorFilterRegistry(filterRegistry);
         if (address(0) != filterRegistry) {
             operatorFilterRegistry.register(address(this));
@@ -99,8 +102,6 @@ contract OGX is
                 );
             }
         }
-        seasonList.push(1);
-        seasonList.push(2);
     }
 
     function addSeason(
@@ -111,10 +112,18 @@ contract OGX is
         uint256 start_time,
         uint256 end_time
     ) external onlyOwner {
-        require(season > 2, "season invalid");
-        require(start_time > 0, "start time invalid");
-        require((end_time > start_time), "end time invalid 1");
+        require(season > 0, "season invalid");
+        require(start_time > block.timestamp, "start time invalid");
+        require((end_time > start_time), "end time invalid");
         require(sellNum > 0, "sell num invalid");
+        bool exists;
+        for (uint i = 0; i < seasonList.length; i++) {
+            if (seasonList[i] == season) {
+                exists = true;
+                break;
+            }
+        }
+        require(!exists, "season already exists");
         Season storage ogxSeason = _ogxSeasons[season][type_];
         ogxSeason.price = price;
         ogxSeason.sellNum = sellNum;
@@ -131,23 +140,29 @@ contract OGX is
         uint256 type_,
         uint256 end_time
     ) external onlyOwner {
-        require(season > 2, "season invalid");
+        require(season > 0, "season invalid");
         Season storage ogxSeason = _ogxSeasons[season][type_];
         require(ogxSeason.start_time > 0, "season not exist");
         require(
-            (end_time > ogxSeason.start_time),
-            "end_time must over start_time"
+            (end_time > ogxSeason.start_time) && (end_time > block.timestamp),
+            "end_time must over start_time and current time"
         );
         ogxSeason.end_time = end_time;
         emit SeasonUpdated(season, type_, end_time);
     }
 
     function deleteSeason(uint256 season, uint256 type_) external onlyOwner {
-        require(season > 2, "season invalid");
+        require(season > 0, "season invalid");
+        Season storage ogxSeason = _ogxSeasons[season][type_];
+        require(ogxSeason.start_time > 0, "season not exist");
         delete (_ogxSeasons[season][type_]);
-        for (uint i = 2; i < seasonList.length; i++) {
+        for (uint i = 0; i < seasonList.length; i++) {
             if (season == seasonList[i]) {
-                delete seasonList[i];
+                uint256 last = seasonList[seasonList.length - 1];
+                seasonList.pop();
+                if (season != last) {
+                    seasonList[i] = last;
+                }
                 break;
             }
         }
@@ -176,8 +191,9 @@ contract OGX is
         bytes32[] calldata merkleProof
     ) external payable {
         require(allowBuy, "buy disabled");
-        require(season > 2, "season invalid");
+        require(season > 0, "season invalid");
         require(num > 0, "number invalid");
+        require(type_ < 3, "type invalid");
         require(_nextTokenId() > 6, "temporarily not allowed");
         require(totalSupply() + num <= MAX_SUPPLY, "over max supply");
         Season storage ogxSeason = _ogxSeasons[season][type_];
@@ -188,7 +204,7 @@ contract OGX is
         );
         require(ogxSeason.sellNum > 0, "sold out");
         require(ogxSeason.sellNum >= num, "not enough left");
-        require(ogxSeason.price * num <= msg.value, "ether invalid");
+        require(ogxSeason.price * num == msg.value, "ether invalid");
         address sender = _msgSender();
         if (type_ == 1) {
             Whitelist storage _whitelistSeason = seasonWhitelist[season];
@@ -210,8 +226,6 @@ contract OGX is
         uint256 totalBoxes = _walletMints[sender] + num;
         require(buyLimit >= totalBoxes, "reach the limit");
         _walletMints[sender] = totalBoxes;
-        // Transfer payment
-        _refundIfOver(ogxSeason.price * num);
 
         uint256 startTokenId = _nextTokenId();
         _mint(sender, num);
@@ -221,37 +235,37 @@ contract OGX is
     }
 
     function treasuryWithdraw(
-        address address_,
-        uint256 value
+        address payable address_,
+        uint256 value_
     ) external onlyOwner nonReentrant {
-        require(address(this).balance >= value, "withdraw too much");
-        if (address(this).balance >= value) {
-            payable(address_).transfer(value);
+        require(address(this).balance >= value_, "withdraw too much");
+        (bool success, ) = address_.call{value: value_}("");
+        if (!success) {
+            revert CallFailed();
         }
     }
 
-    function mintNFTToTeamMember(uint256 num, address to) external onlyOwner {
+    function mintNFTToTeamMember(
+        uint256 season,
+        uint256 num,
+        address to
+    ) external onlyOwner {
         require(allowBuy, "buy disabled");
-        require(_nextTokenId() > 6, "temporarily not allowed");
+        require(num > 0, "number invalid");
         require(totalSupply() + num <= MAX_SUPPLY, "over max supply");
-        // Add user bought boxes
-        uint256 startTokenId = _nextTokenId();
-        _mint(to, num);
-        _bornOGX(startTokenId, 2);
-        emit TokenBorned(to, startTokenId, num, 2);
-    }
-
-    function mintExtraNFT(uint256 num, address to) external onlyOwner {
-        require(allowBuy, "buy disabled");
-        require(totalSupply() + num <= MAX_SUPPLY, "over max supply");
-        Season storage ogxSeason = _ogxSeasons[1][0];
+        Season storage ogxSeason = _ogxSeasons[season][3];
+        require(
+            (ogxSeason.start_time <= block.timestamp) &&
+                (ogxSeason.end_time >= block.timestamp),
+            "not in the sale period"
+        );
         require(ogxSeason.sellNum > 0, "sold out");
         require(ogxSeason.sellNum >= num, "not enough left");
         uint256 startTokenId = _nextTokenId();
         _mint(to, num);
         ogxSeason.sellNum = ogxSeason.sellNum - num;
-        _bornOGX(startTokenId, 1);
-        emit TokenBorned(to, startTokenId, num, 1);
+        _bornOGX(startTokenId, season);
+        emit TokenBorned(to, startTokenId, num, season);
     }
 
     function lock(uint256[] calldata tokenIds) external {
@@ -305,9 +319,7 @@ contract OGX is
         uint256 seasonNum,
         string calldata baseUri
     ) external onlyOwner {
-        if (bytes(seasonUriMap[seasonNum]).length > 0) {
-            revert SeasonURINotEmpty(seasonNum);
-        }
+        require(bytes(baseUri).length > 0, "baseUri is empty");
         seasonUriMap[seasonNum] = baseUri;
         emit SeasonOpened(seasonNum, baseUri);
     }
@@ -316,10 +328,8 @@ contract OGX is
         require(bytes(baseUri).length > 0, "baseUri is empty");
         for (uint i = 0; i < seasonList.length; i++) {
             uint256 seasonNum = seasonList[i];
-            if (seasonNum > 0) {
-                seasonUriMap[seasonNum] = baseUri;
-                emit SeasonOpened(seasonNum, baseUri);
-            }
+            seasonUriMap[seasonNum] = baseUri;
+            emit SeasonOpened(seasonNum, baseUri);
         }
     }
 
@@ -327,14 +337,17 @@ contract OGX is
         string memory hiddenMetadataURI
     ) external onlyOwner {
         _hiddenMetadataURI = hiddenMetadataURI;
+        emit HiddenMetadataURISet(hiddenMetadataURI);
     }
 
     function setAllowBuy(bool allowBuy_) external onlyOwner {
         allowBuy = allowBuy_;
+        emit AllowBuySet(allowBuy_);
     }
 
     function setBuyLimit(uint256 buyLimit_) external onlyOwner {
         buyLimit = buyLimit_;
+        emit BuyLimitSet(buyLimit_);
     }
 
     function getSeason(
@@ -356,6 +369,7 @@ contract OGX is
         uint96 feeBasisPoints
     ) external onlyOwner {
         _setDefaultRoyalty(receiver, feeBasisPoints);
+        emit RoyaltyInfoSet(receiver, feeBasisPoints);
     }
 
     function supportsInterface(
@@ -389,7 +403,7 @@ contract OGX is
         uint256[] calldata tokens
     ) public payable onlyAllowedOperator(from) {
         for (uint256 index = 0; index < tokens.length; index++) {
-            super.transferFrom(from, to, tokens[index]);
+            super.safeTransferFrom(from, to, tokens[index]);
         }
     }
 
@@ -426,19 +440,6 @@ contract OGX is
         returns (address)
     {
         return Ownable.owner();
-    }
-
-    function _refundIfOver(uint256 price) private {
-        require(msg.value >= price, "need more eth");
-        if (msg.value > price) {
-            payable(msg.sender).transfer(msg.value - price);
-        }
-    }
-
-    // teammeber season is alway 1 and type is always 0
-    function _initRetainSeason() private {
-        Season storage extraSeason = _ogxSeasons[1][0];
-        extraSeason.sellNum = 6;
     }
 
     function _startTokenId() internal view virtual override returns (uint256) {
@@ -479,20 +480,6 @@ contract OGX is
             }
         }
         super._beforeTokenTransfers(from, to, startTokenId, quantity);
-    }
-
-    function _afterTokenTransfers(
-        address from,
-        address to,
-        uint256 startTokenId,
-        uint256 quantity
-    ) internal virtual override {
-        // if it is a Transfer or Burn, we always deal with one token, that is startTokenId
-        if (from != address(0)) {
-            // clear locks
-            delete _lockTokens[startTokenId];
-        }
-        super._afterTokenTransfers(from, to, startTokenId, quantity);
     }
 
     function _checkTokenOwner(uint256 tokenId) internal view {
