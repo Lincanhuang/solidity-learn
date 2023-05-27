@@ -30,6 +30,7 @@ contract XBadge is
         uint256[] quantitys,
         uint256 startTokenId
     );
+    event RoyaltyInfoSet(address receiver, uint96 feeBasisPoints);
 
     uint256 private _seasonCount;
     mapping(uint256 => bool) private _lockTokens; //token => isLooked
@@ -45,7 +46,7 @@ contract XBadge is
         ERC721A(name, symbol)
         UpdatableOperatorFilterer(address(0), address(0), false)
     {
-        _setDefaultRoyalty(msg.sender, 1000);
+        _setDefaultRoyalty(msg.sender, 500);
         operatorFilterRegistry = IOperatorFilterRegistry(filterRegistry);
         if (address(0) != filterRegistry) {
             operatorFilterRegistry.register(address(this));
@@ -123,6 +124,7 @@ contract XBadge is
         uint96 feeBasisPoints
     ) external onlyOwner {
         _setDefaultRoyalty(receiver, feeBasisPoints);
+        emit RoyaltyInfoSet(receiver, feeBasisPoints);
     }
 
     function supportsInterface(
@@ -154,7 +156,7 @@ contract XBadge is
         uint256[] calldata tokens
     ) public payable onlyAllowedOperator(from) {
         for (uint256 index = 0; index < tokens.length; index++) {
-            super.transferFrom(from, to, tokens[index]);
+            super.safeTransferFrom(from, to, tokens[index]);
         }
     }
 
@@ -227,20 +229,6 @@ contract XBadge is
             }
         }
         super._beforeTokenTransfers(from, to, startTokenId, quantity);
-    }
-
-    function _afterTokenTransfers(
-        address from,
-        address to,
-        uint256 startTokenId,
-        uint256 quantity
-    ) internal virtual override {
-        // if it is a Transfer or Burn, we always deal with one token, that is startTokenId
-        if (from != address(0)) {
-            // clear locks
-            delete _lockTokens[startTokenId];
-        }
-        super._afterTokenTransfers(from, to, startTokenId, quantity);
     }
 
     function _startTokenId() internal pure override(ERC721A) returns (uint256) {

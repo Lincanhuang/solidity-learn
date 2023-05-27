@@ -32,6 +32,8 @@ contract Mirpass is
         uint256 startTokenId
     );
     event BurnSynthesize(uint256 indexed burnToken, uint256 synthesizeToken);
+    event RoyaltyInfoSet(address receiver, uint96 feeBasisPoints);
+    event BaseURISet(string baseURI);
 
     string private _uri;
     mapping(uint256 => bool) private _lockTokens; //token => isLooked
@@ -47,7 +49,7 @@ contract Mirpass is
         UpdatableOperatorFilterer(address(0), address(0), false)
     {
         _uri = baseURI;
-        _setDefaultRoyalty(msg.sender, 1000);
+        _setDefaultRoyalty(msg.sender, 500);
         operatorFilterRegistry = IOperatorFilterRegistry(filterRegistry);
         if (address(0) != filterRegistry) {
             operatorFilterRegistry.register(address(this));
@@ -72,7 +74,7 @@ contract Mirpass is
         for (uint256 i = 0; i < length; ) {
             address account = accounts[i];
             uint256 quantity = quantitys[i];
-            if (totalSupply() + quantity > maxSupply) {
+            if (totalMint() + quantity > maxSupply) {
                 revert MaxSupplyExceeded();
             }
             _mint(account, quantity);
@@ -97,6 +99,7 @@ contract Mirpass is
 
     function setBaseURI(string calldata baseURI_) external onlyOwner {
         _uri = baseURI_;
+        emit BaseURISet(baseURI_);
     }
 
     function addSupply(uint256 quantity) external onlyOwner {
@@ -107,7 +110,7 @@ contract Mirpass is
         maxSupply = maxSupply + quantity;
     }
 
-    function totalSupply() public view override returns (uint256) {
+    function totalMint() public view returns (uint256) {
         unchecked {
             return _nextTokenId() - _startTokenId();
         }
@@ -117,6 +120,10 @@ contract Mirpass is
         uint256 burnTokenId,
         uint256 synthesizeTokenId
     ) external onlyTokenOwner(burnTokenId) onlyTokenOwner(synthesizeTokenId) {
+        require(
+            burnTokenId != synthesizeTokenId,
+            "burnTokenId and synthesizeTokenId should be different"
+        );
         if (_lockTokens[burnTokenId]) {
             revert TokenIsLocked(burnTokenId);
         }
@@ -139,6 +146,7 @@ contract Mirpass is
         uint96 feeBasisPoints
     ) external onlyOwner {
         _setDefaultRoyalty(receiver, feeBasisPoints);
+        emit RoyaltyInfoSet(receiver, feeBasisPoints);
     }
 
     function supportsInterface(
@@ -170,7 +178,7 @@ contract Mirpass is
         uint256[] calldata tokens
     ) public payable onlyAllowedOperator(from) {
         for (uint256 index = 0; index < tokens.length; index++) {
-            super.transferFrom(from, to, tokens[index]);
+            super.safeTransferFrom(from, to, tokens[index]);
         }
     }
 
@@ -243,20 +251,6 @@ contract Mirpass is
             }
         }
         super._beforeTokenTransfers(from, to, startTokenId, quantity);
-    }
-
-    function _afterTokenTransfers(
-        address from,
-        address to,
-        uint256 startTokenId,
-        uint256 quantity
-    ) internal virtual override {
-        // if it is a Transfer or Burn, we always deal with one token, that is startTokenId
-        if (from != address(0)) {
-            // clear locks
-            delete _lockTokens[startTokenId];
-        }
-        super._afterTokenTransfers(from, to, startTokenId, quantity);
     }
 
     function _startTokenId() internal pure override(ERC721A) returns (uint256) {
