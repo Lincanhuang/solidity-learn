@@ -17,6 +17,7 @@ contract OGX is
     ReentrancyGuard
 {
     struct Season {
+        uint256 _type;
         uint256 price;
         uint256 sellNum;
         uint256 startTime;
@@ -42,7 +43,7 @@ contract OGX is
 
     mapping(address => uint256) private _walletMints; //record wallet mint number
     mapping(uint256 => uint256) private _tokenSeasonMap; // tokenId => seasonNum
-    mapping(uint256 => mapping(uint256 => Season)) private _ogxSeasons; // seasonNum => type => Season
+    mapping(uint256 => Season) private _ogxSeasons; // seasonNum =>  Season
     mapping(uint256 => bool) private _lockTokens; //token => isLocked
 
     event TokenBorn(
@@ -58,14 +59,10 @@ contract OGX is
         uint256 startTime,
         uint256 endTime
     );
-    event SeasonUpdated(
-        uint256 indexed season,
-        uint256 indexed type_,
-        uint256 endTime
-    );
+    event SeasonUpdated(uint256 indexed season, uint256 endTime);
     event WhitelistDeleted(uint256 indexed season);
     event WhitelistAdded(uint256 indexed season, bytes32 merkleRoot);
-    event SeasonsDeleted(uint256 indexed season, uint256 indexed type_);
+    event SeasonsDeleted(uint256 indexed season);
     event TokenLocked(uint256 indexed tokenId);
     event TokenUnlocked(uint256 indexed tokenId);
     event SeasonOpened(uint256 indexed season, string baseURI);
@@ -116,46 +113,34 @@ contract OGX is
         require(startTime > block.timestamp, "startTime invalid");
         require((endTime > startTime), "endTime invalid");
         require(sellNum > 0, "sell num invalid");
-        bool exists;
-        for (uint i = 0; i < seasonList.length; i++) {
-            if (seasonList[i] == season) {
-                exists = true;
-                break;
-            }
-        }
-        require(!exists, "season already exists");
-        Season storage ogxSeason = _ogxSeasons[season][type_];
+        Season storage ogxSeason = _ogxSeasons[season];
+        require(ogxSeason.startTime == 0, "season already exists");
         ogxSeason.price = price;
         ogxSeason.sellNum = sellNum;
         ogxSeason.startTime = startTime;
         ogxSeason.endTime = endTime;
+        ogxSeason._type = type_;
 
         seasonList.push(season);
 
         emit SeasonAdded(season, type_, sellNum, startTime, endTime);
     }
 
-    function updateSeason(
-        uint256 season,
-        uint256 type_,
-        uint256 endTime
-    ) external onlyOwner {
-        require(season > 0, "season invalid");
-        Season storage ogxSeason = _ogxSeasons[season][type_];
+    function updateSeason(uint256 season, uint256 endTime) external onlyOwner {
+        Season storage ogxSeason = _ogxSeasons[season];
         require(ogxSeason.startTime > 0, "season not exist");
         require(
             (endTime > ogxSeason.startTime) && (endTime > block.timestamp),
             "endTime must over startTime and current time"
         );
         ogxSeason.endTime = endTime;
-        emit SeasonUpdated(season, type_, endTime);
+        emit SeasonUpdated(season, endTime);
     }
 
-    function deleteSeason(uint256 season, uint256 type_) external onlyOwner {
-        require(season > 0, "season invalid");
-        Season storage ogxSeason = _ogxSeasons[season][type_];
+    function deleteSeason(uint256 season) external onlyOwner {
+        Season storage ogxSeason = _ogxSeasons[season];
         require(ogxSeason.startTime > 0, "season not exist");
-        delete (_ogxSeasons[season][type_]);
+        delete (_ogxSeasons[season]);
         delete (seasonWhitelist[season]);
         for (uint i = 0; i < seasonList.length; i++) {
             if (season == seasonList[i]) {
@@ -167,7 +152,7 @@ contract OGX is
                 break;
             }
         }
-        emit SeasonsDeleted(season, type_);
+        emit SeasonsDeleted(season);
     }
 
     // Function to set the merkle root
@@ -187,17 +172,18 @@ contract OGX is
 
     function buyBox(
         uint256 season,
-        uint256 type_,
         uint256 num,
         bytes32[] calldata merkleProof
     ) external payable {
         require(allowBuy, "buy disabled");
-        require(season > 0, "season invalid");
         require(num > 0, "number invalid");
-        require(type_ < 3, "type invalid");
-        require(_nextTokenId() > 6, "temporarily not allowed");
         require(totalSupply() + num <= MAX_SUPPLY, "over max supply");
-        Season storage ogxSeason = _ogxSeasons[season][type_];
+        Season storage ogxSeason = _ogxSeasons[season];
+        require(ogxSeason.startTime > 0, "season not exist");
+        require(
+            ogxSeason._type < 3,
+            "the season is not allowed to mint by this function"
+        );
         require(
             (ogxSeason.startTime <= block.timestamp) &&
                 (ogxSeason.endTime >= block.timestamp),
@@ -207,7 +193,7 @@ contract OGX is
         require(ogxSeason.sellNum >= num, "not enough left");
         require(ogxSeason.price * num == msg.value, "ether invalid");
         address sender = _msgSender();
-        if (type_ == 1) {
+        if (ogxSeason._type == 1) {
             Whitelist storage _whitelistSeason = seasonWhitelist[season];
             require(
                 _whitelistSeason.season != 0,
@@ -254,7 +240,12 @@ contract OGX is
         require(allowBuy, "buy disabled");
         require(num > 0, "number invalid");
         require(totalSupply() + num <= MAX_SUPPLY, "over max supply");
-        Season storage ogxSeason = _ogxSeasons[season][3];
+        Season storage ogxSeason = _ogxSeasons[season];
+        require(ogxSeason.startTime > 0, "season not exist");
+        require(
+            ogxSeason._type == 3,
+            "the season is not allowed to mint by this function"
+        );
         require(
             (ogxSeason.startTime <= block.timestamp) &&
                 (ogxSeason.endTime >= block.timestamp),
@@ -352,12 +343,12 @@ contract OGX is
     }
 
     function getSeason(
-        uint256 season,
-        uint256 type_
-    ) external view returns (uint256, uint256, uint256, bool) {
-        Season storage ogxSeason = _ogxSeasons[season][type_];
+        uint256 season
+    ) external view returns (uint256, uint256, uint256, uint256, bool) {
+        Season storage ogxSeason = _ogxSeasons[season];
         bool soldOut = (ogxSeason.sellNum == 0);
         return (
+            ogxSeason._type,
             ogxSeason.price,
             ogxSeason.startTime,
             ogxSeason.endTime,
