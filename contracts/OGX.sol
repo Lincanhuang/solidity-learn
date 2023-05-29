@@ -17,7 +17,7 @@ contract OGX is
     ReentrancyGuard
 {
     struct Season {
-        uint256 _type;
+        uint256 type_;
         uint256 price;
         uint256 sellNum;
         uint256 startTime;
@@ -119,7 +119,7 @@ contract OGX is
         ogxSeason.sellNum = sellNum;
         ogxSeason.startTime = startTime;
         ogxSeason.endTime = endTime;
-        ogxSeason._type = type_;
+        ogxSeason.type_ = type_;
 
         seasonList.push(season);
 
@@ -181,7 +181,7 @@ contract OGX is
         Season storage ogxSeason = _ogxSeasons[season];
         require(ogxSeason.startTime > 0, "season not exist");
         require(
-            ogxSeason._type < 3,
+            ogxSeason.type_ < 3,
             "the season is not allowed to mint by this function"
         );
         require(
@@ -193,7 +193,7 @@ contract OGX is
         require(ogxSeason.sellNum >= num, "not enough left");
         require(ogxSeason.price * num == msg.value, "ether invalid");
         address sender = _msgSender();
-        if (ogxSeason._type == 1) {
+        if (ogxSeason.type_ == 1) {
             Whitelist storage _whitelistSeason = seasonWhitelist[season];
             require(
                 _whitelistSeason.season != 0,
@@ -243,7 +243,7 @@ contract OGX is
         Season storage ogxSeason = _ogxSeasons[season];
         require(ogxSeason.startTime > 0, "season not exist");
         require(
-            ogxSeason._type == 3,
+            ogxSeason.type_ == 3,
             "the season is not allowed to mint by this function"
         );
         require(
@@ -348,7 +348,7 @@ contract OGX is
         Season storage ogxSeason = _ogxSeasons[season];
         bool soldOut = (ogxSeason.sellNum == 0);
         return (
-            ogxSeason._type,
+            ogxSeason.type_,
             ogxSeason.price,
             ogxSeason.startTime,
             ogxSeason.endTime,
