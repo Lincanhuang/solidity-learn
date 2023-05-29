@@ -36,7 +36,7 @@ contract Mirpass is
     event BaseURISet(string baseURI);
 
     string private _uri;
-    mapping(uint256 => bool) private _lockTokens; //token => isLooked
+    mapping(uint256 => bool) private _lockTokens; //token => isLocked
 
     constructor(
         string memory baseURI,

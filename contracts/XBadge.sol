@@ -33,7 +33,7 @@ contract XBadge is
     event RoyaltyInfoSet(address receiver, uint96 feeBasisPoints);
 
     uint256 private _seasonCount;
-    mapping(uint256 => bool) private _lockTokens; //token => isLooked
+    mapping(uint256 => bool) private _lockTokens; //token => isLocked
     mapping(uint256 => uint256) private _tokenSeasonData; //token => season;token is the season start token id;
     mapping(uint256 => string) private _seasonBaseURIData; //season => baseURI;
 
